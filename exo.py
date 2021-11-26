@@ -1,48 +1,33 @@
 from math import modf
 import numpy as np
+from numpy import vectorize
 import scipy.optimize as opt
 import matplotlib.pyplot as plt
 
 import datetime
-j2000 = datetime.datetime(2000, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
 
-def get_julian_datetime(date):
-    if date.year < 1801 or date.year > 2099:
-        raise ValueError('Datetime must be between year 1801 and 2099')
+@vectorize
+def jul_to_greg(jd):
+    assert np.all(jd >= 0)
+    frac, jd = np.modf(jd)
+    f = int(jd + 1401 + (((4 * jd + 274277)//146097) * 3) // 4 - 38)
+    e = 4 * f + 3
+    g = (e % 1461) // 4
+    h = 5 * g + 2
+    day = (h % 153) // 5 + 1
+    month = (h // 153 + 2) % 12 + 1
+    year = (e // 1461) - 4716 + (14 - month) // 12
+    frac, hour = np.modf(24 * frac)
+    frac, minute = np.modf(60 * frac)
+    frac, second = np.modf(60 * frac)
+    frac, microsecond = np.modf(1000000 * frac)
+    return datetime.datetime(year=year, month=month, day=day, hour=12+int(hour), minute=int(minute), second=int(second), microsecond=int(microsecond))
 
-    julian_datetime = 367 * date.year - int((7 * (date.year + int((date.month + 9) / 12.0))) / 4.0) + int((275 * date.month) / 9.0) + date.day + 1721013.5 + (date.hour + date.minute / 60.0 + date.second / np.power(60,2)) / 24.0 - 0.5 * np.copysign(1, 100 * date.year + date.month - 190002.5) + 0.5
-
-    return julian_datetime
-
-def get_gregorian_datetime(date):
-    date = float(date)
-    date_f, date_i = np.modf(date)
-    date_f = float(date_f)
-    date_i = int(date_i)
-    if -0.5 < date_f < 0.5:
-        date_f += 0.5
-    elif date_f >= 0.5:
-        date_i += 1
-        date_f -= 0.5
-    elif date_f <= -0.5:
-        date_i -= 1
-        date_f += 1.5
-
-    ell = date_i + 68569
-    n = int((4 * ell) / 146097.0)
-    ell -= int(((146097 * n) + 3) / 4.0)
-    i = int((4000 * (ell + 1)) / 1461001)
-    ell -= int((1461 * i) / 4.0) - 31
-    j = int((80 * ell) / 2447.0)
-    day = ell - int((2447 * j) / 80.0)
-    ell = int(j / 11.0)
-    month = j + 2 - (12 * ell)
-    year = 100 * (n - 49) + i + ell
-    date_f, hour = np.modf(24 * date_f)
-    date_f, minute = np.modf(60 * date_f)
-    date_f, second = np.modf(60 * date_f)
-    date_f, microsecond = np.modf(1000000 * date_f)
-    return datetime.datetime(year=year, month=month, day=day, hour=int(hour), minute=int(minute), second=int(second), microsecond=int(microsecond))
+def greg_to_jul(dt):
+    # jdn = (1461 * (dt.year + 4800 + (dt.month - 14) // 12)) // 4 + (367 * (dt.month - 2 - 12 * ((dt.month - 14) // 12))) // 12 - (3 * ((dt.year + 4900 + (dt.month - 14) // 12) // 100)) // 4 + dt.day - 32075
+    # return float(jdn) + float(dt.hour - 12)/24 + float(dt.minute)/1440 + float(dt.second)/86400 + float(dt.microsecond)/1000000
+    jd = 367 * dt.year - int((7 * (dt.year + int((dt.month + 9) / 12.0))) / 4.0) + int((275 * dt.month) / 9.0) + dt.day + 1721013.5 +(dt.hour + dt.minute / 60.0 + dt.second / np.power(60,2) + dt.microsecond / (np.power(60,2) * 1000000)) / 24.0 - 0.5 * np.copysign(1, 100 * dt.year + dt.month - 190002.5) + 0.5
+    return jd
 
 def make_piecewise(params):
     params = np.array(params)
@@ -65,22 +50,33 @@ def make_piecewise(params):
         return np.piecewise(x, conds, funcs)
     return f
 
+def load_exo_data():
+    rawdata = np.genfromtxt('./Tres-1b/Tres-1b_Mag_diff.txt', delimiter=' ', skip_header=2)
+    # Weird data in line 120 because Muniwin did not cross reference the variable star
+    mask = np.ones(len(rawdata), dtype=bool)
+    mask[[117]] = False
+    rawdata = rawdata[mask,...]
+    return rawdata
 
-rawdata = np.genfromtxt('./Tres-1b/Tres-1b_Mag_diff.txt', delimiter=' ', skip_header=2)
-# Weird data in line 120 because Muniwin did not cross reference the variable star
-mask = np.ones(len(rawdata), dtype=bool)
-mask[[117]] = False
-rawdata = rawdata[mask,...]
-data = rawdata[:, :3]
-t = data[:, 0]
-VC = data[:, 1]
-VCmax, VCmin, VCmean = VC.max(), VC.min(), VC.mean()
-VCerr = data[:, 2]
-plt.plot(t, VC)
-plt.ylim(VCmax + 0.05 * VCmean, VCmin - 0.05 * VCmean)
-plt.show()
+def process_exo_data(rawdata):
+    data = rawdata[:, :3]
+    t = data[:, 0]
+    VC = data[:, 1]
+    VCmax, VCmin, VCmean = VC.max(), VC.min(), VC.mean()
+    VCerr = data[:, 2]
+    return t, VC, VCerr, VCmax, VCmin, VCmean
 
-f = make_piecewise([[0.5, 10, 20], [-0.5, 0.5, 1]])
-x = np.linspace(0, 2, 10)
-plt.plot(x, f(x))
-plt.show()
+def plot_exo_data(data):
+    t, VC, VCerr, VCmax, VCmin, VCmean = data
+    plt.plot(t, VC)
+    plt.ylim(VCmax + 0.05 * VCmean, VCmin - 0.05 * VCmean)
+    plt.show()
+
+if __name__ == "__main__":
+    #f = lambda x,m,b,n,c: (x > 0 ? (x > 1 ? m*x + b : (x > 2 ? 0 : n*x + c)) : 0)
+    #x = np.linspace(0, 2, 10)
+    #plt.plot(x, f(x))
+    #plt.show()
+    rawdata = load_exo_data()
+    data = process_exo_data(rawdata)
+    print(jul_to_greg(data[0]))
