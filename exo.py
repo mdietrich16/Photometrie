@@ -50,6 +50,31 @@ def make_piecewise(params):
         return np.piecewise(x, conds, funcs)
     return f
 
+def trapez(x, m1, b1, x1, m2, b2, x2, m3, b3, x3, m4, b4, x4, m5, b5):
+    if x < x3:
+        if x > x1:
+            if x < x2:
+                return m2 * x + b2
+            else:
+                return m3 * x + b3
+        else:
+            return m1 * x + b1
+    else:
+        if x < x4:
+            return m4 * x + b4
+        else:
+            return m5 * x + b5
+
+def f(x, p0x, p0y, p1x, p1y, p2x, p2y, p3x, p3y):
+    if(x < p0x or x > p3x):
+        return (p3y - p0y) / (p3x - p0x) * (x - p0x) + p0y
+    elif(x < p1x):
+        return (p1y - p0y) / (p1x - p0x) * (x - p0x) + p0y
+    elif(x < p2x):
+        return (p2y - p1y) / (p2x - p1x) * (x - p1x) + p1y
+    else:
+        return (p3y - p2y) / (p3x - p2x) * (x - p2x) + p2y
+
 def load_exo_data():
     rawdata = np.genfromtxt('./Tres-1b/Tres-1b_Mag_diff.txt', delimiter=' ', skip_header=2)
     # Weird data in line 120 because Muniwin did not cross reference the variable star
@@ -66,11 +91,15 @@ def process_exo_data(rawdata):
     VCerr = data[:, 2]
     return t, VC, VCerr, VCmax, VCmin, VCmean
 
-def plot_exo_data(data):
+def plot_exo_data(data, show=False):
     t, VC, VCerr, VCmax, VCmin, VCmean = data
-    plt.plot(t, VC)
+    #plt.errorbar(x=jul_to_greg(t), y=VC, yerr= VCerr, fmt='x')
+    plt.errorbar(x=t, y=VC, yerr= VCerr, fmt='x')
     plt.ylim(VCmax + 0.05 * VCmean, VCmin - 0.05 * VCmean)
-    plt.show()
+    if show:
+        plt.show()
+    else:
+        plt.savefig('Tres-1b-plt.png')
 
 if __name__ == "__main__":
     #f = lambda x,m,b,n,c: (x > 0 ? (x > 1 ? m*x + b : (x > 2 ? 0 : n*x + c)) : 0)
@@ -79,4 +108,6 @@ if __name__ == "__main__":
     #plt.show()
     rawdata = load_exo_data()
     data = process_exo_data(rawdata)
-    print(jul_to_greg(data[0]))
+    plot_exo_data(data)
+    t, VC = data[0:2]
+    params1 = opt.curve_fit(f, t, VC, p0=[])
