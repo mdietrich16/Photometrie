@@ -1,12 +1,16 @@
 from math import modf
 import numpy as np
 from numpy import vectorize
+from numpy.core.fromnumeric import var
+from numpy.linalg import cond
 import scipy.optimize as opt
+from scipy.special import factorial
 import matplotlib.pyplot as plt
 
 import datetime
+jdt_exo = 2.459492e6
+jdt_var = 2.459543e6
 
-@vectorize
 def jul_to_greg(jd):
     assert np.all(jd >= 0)
     frac, jd = np.modf(jd)
@@ -29,85 +33,157 @@ def greg_to_jul(dt):
     jd = 367 * dt.year - int((7 * (dt.year + int((dt.month + 9) / 12.0))) / 4.0) + int((275 * dt.month) / 9.0) + dt.day + 1721013.5 +(dt.hour + dt.minute / 60.0 + dt.second / np.power(60,2) + dt.microsecond / (np.power(60,2) * 1000000)) / 24.0 - 0.5 * np.copysign(1, 100 * dt.year + dt.month - 190002.5) + 0.5
     return jd
 
-def make_piecewise(params):
-    params = np.array(params)
-    assert len(params.shape) == 2
-    assert params.shape[1] == 3
-    n = params.shape[0]
-
-    funcs = []
-    boundaries = []
-    for m,b,x_min in params:
-        print(m, b, x_min)
-        funcs.append(lambda x: m*x + b)
-        boundaries.append(lambda x: x >= x_min)
-    #return lambda x: np.piecewise(x, [cond(x) for cond in reversed(boundaries)], list(reversed(funcs)))
-    print(boundaries)
-    def f(x):
-        conds = [cond(x) for cond in boundaries]
-        print(conds)
-        print(funcs)
-        return np.piecewise(x, conds, funcs)
-    return f
-
-def trapez(x, m1, b1, x1, m2, b2, x2, m3, b3, x3, m4, b4, x4, m5, b5):
-    if x < x3:
-        if x > x1:
-            if x < x2:
-                return m2 * x + b2
-            else:
-                return m3 * x + b3
-        else:
-            return m1 * x + b1
-    else:
-        if x < x4:
-            return m4 * x + b4
-        else:
-            return m5 * x + b5
-
-def f(x, p0x, p0y, p1x, p1y, p2x, p2y, p3x, p3y):
-    if(x < p0x or x > p3x):
+def trapez(x, p0x, p0y, p1x, p1y, p2x, p2y, p3x, p3y):
+    condlist = [np.logical_or(x < p0x, x > p3x), np.logical_and(x < p1x, x > p0x), np.logical_and(x < p2x, x > p1x), np.logical_and(x < p3x, x > p2x)]
+    def steady(x):
         return (p3y - p0y) / (p3x - p0x) * (x - p0x) + p0y
-    elif(x < p1x):
+
+    def trans_in(x):
         return (p1y - p0y) / (p1x - p0x) * (x - p0x) + p0y
-    elif(x < p2x):
+
+    def trans_total(x):
         return (p2y - p1y) / (p2x - p1x) * (x - p1x) + p1y
-    else:
+
+    def trans_out(x):
         return (p3y - p2y) / (p3x - p2x) * (x - p2x) + p2y
 
-def load_exo_data():
-    rawdata = np.genfromtxt('./Tres-1b/Tres-1b_Mag_diff.txt', delimiter=' ', skip_header=2)
-    # Weird data in line 120 because Muniwin did not cross reference the variable star
-    mask = np.ones(len(rawdata), dtype=bool)
-    mask[[117]] = False
-    rawdata = rawdata[mask,...]
-    return rawdata
+    return np.piecewise(x, condlist=condlist, funclist=[steady, trans_in, trans_total, trans_out])
 
-def process_exo_data(rawdata):
-    data = rawdata[:, :3]
-    t = data[:, 0]
-    VC = data[:, 1]
+def transit(x, m, b, tm, tt, td, ttd):
+    # x: Input
+    # m: Steigung der Hauptgeraden
+    # b: y-Achsen-Abschnitt der Hauptgeraden
+    # tm: Transitmitte
+    # tt: Transittiefe
+    # td: Transitdauer
+    # ttd: Totalitätsdauer
+    y = m * x + b
+    td2, ttd2 = td/2, ttd/2
+    diff = td2 - ttd2
+    slope = tt / diff
+    condlist = [np.logical_and(x > tm-td/2, x < tm-ttd/2), np.logical_and(x > tm-ttd/2, x < tm+ttd/2), np.logical_and(x > tm+ttd/2, x < tm+td/2)]
+    y += np.piecewise(x, condlist, funclist=[lambda x: -slope * (x - (tm - td2)), lambda x: -tt, lambda x: slope * (x - (tm + td2)), lambda x: 0])
+    return y
+
+def lerp(t, p1, p2):
+    return (1 - t)*p1 + t*p2
+
+def nCk(n, k):
+    return factorial(n)/(factorial(n-k)*factorial(k))
+
+def bezier(t, points):
+    t = t.reshape(-1, 1)
+    degree = points.shape[0]-1
+    i = np.tile(np.arange(degree+1), (t.shape[0], 1))
+    return np.dot(nCk(degree, i)*np.power(1 - t, degree - i)*np.power(t,i),points)
+
+#def bezier(t, points):
+#    num = len(points)
+#    if num == 1:
+#        return points[0]
+#    else:
+#        return lerp(t, bezier(t, points[:-1]), bezier(t, points[1:]))
+
+def transit_bezier(x, x0, xn, *points):
+    dx = 0.05
+    points = np.array(points)
+    x = np.array(x)
+    dx2= xn - x0
+    # return m * x + b + (x > x0)*(x < xn)*bezier((x-x0)/dx, points)[:,1]
+    # return bezier((x-x0)/dx, points)
+    def linear(x):
+        return (points[-1] - points[0])/dx2 * (x - x0) + points[0]
+
+    points = np.array([points[0], linear(x0 + dx), *points[1:-1], linear(xn - dx), points[-1]])
+    condlist = [x < x0, np.logical_and(x >= x0, x < xn), x >= xn]
+    funclist = [linear, lambda z: bezier((z-x0)/dx2, points), linear]
+    return np.piecewise(x, condlist, funclist)
+
+def fourier(x, *params):
+    params = np.array(params)
+    assert len(params.shape) == 1
+    n = len(params) - 3
+    assert n % 2 == 0
+    assert n >= 0
+    T = params[0]
+    m = params[1]
+    offset = params[2]
+    coeffs = params[3:]
+    k = 2*np.pi / T
+    ts = k * np.atleast_2d(np.arange(1, n//2+1)).transpose().dot(np.atleast_2d(x))
+    s = np.sin(ts)
+    c = np.cos(ts)
+    return coeffs.dot(np.concatenate((s,c))) + m*x + offset
+
+
+def load_data(file):
+    rawdata = np.genfromtxt(file, delimiter=',', skip_header=1)
+    t = rawdata[:, 0]
+    VC = np.power(10,-rawdata[:, 1]/2.5)
+    # 10^(-x/2.5)' = e^(ln10 * -x/2.5)' = -ln(10)/2.5 * e^(ln10 * -x/2.5)
+    VCerr = np.log(10)/2.5 * np.power(10,-rawdata[:, 1]/2.5) * rawdata[:, 2]
+    data = np.stack((t, VC, VCerr), axis=-1)
+    return data
+
+def plot_data(data, date, fit_funcs, fit_params, labels, star, filename=None):
+    t, VC, VCerr = data.transpose()
     VCmax, VCmin, VCmean = VC.max(), VC.min(), VC.mean()
-    VCerr = data[:, 2]
-    return t, VC, VCerr, VCmax, VCmin, VCmean
+    VCerrmax = np.max(VCerr)
 
-def plot_exo_data(data, show=False):
-    t, VC, VCerr, VCmax, VCmin, VCmean = data
     #plt.errorbar(x=jul_to_greg(t), y=VC, yerr= VCerr, fmt='x')
-    plt.errorbar(x=t, y=VC, yerr= VCerr, fmt='x')
-    plt.ylim(VCmax + 0.05 * VCmean, VCmin - 0.05 * VCmean)
-    if show:
-        plt.show()
+    plt.figure(figsize=(14, 10), dpi=300)
+
+    plt.errorbar(x=t, y=VC, yerr= VCerr, fmt='.', elinewidth=.8, capsize=2, label='Daten')
+
+    for i, fit_func in enumerate(fit_funcs):
+        fit = fit_func(t, *(fit_params[i]))
+        plt.plot(t, fit, label=labels[i])
+
+    plt.grid(True, color='gray', linewidth=0.1)
+    #plt.ylim(VCmin - 0.01 * VCmean - VCerrmax, VCmax + 0.01 * VCmean + VCerrmax)
+    plt.legend()
+    plt.title('Lichtkurve ' + star)
+    plt.xlabel('Zeit in Tagen am ' + str(jul_to_greg(date).date()))
+    plt.ylabel('Strahlungsflussverhältnis V-C')
+
+    if filename:
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        plt.close()
     else:
-        plt.savefig('Tres-1b-plt.png')
+        plt.show()
 
 if __name__ == "__main__":
-    #f = lambda x,m,b,n,c: (x > 0 ? (x > 1 ? m*x + b : (x > 2 ? 0 : n*x + c)) : 0)
-    #x = np.linspace(0, 2, 10)
-    #plt.plot(x, f(x))
-    #plt.show()
-    rawdata = load_exo_data()
-    data = process_exo_data(rawdata)
-    plot_exo_data(data)
-    t, VC = data[0:2]
-    params1 = opt.curve_fit(f, t, VC, p0=[])
+    exodata = load_data('./Tres-1b/Tres-1b_V-C.csv')
+    jdt_exo = int(exodata[:, 0].mean())
+    exodata[:,0] -= jdt_exo
+    t_exo = exodata[:, 0]
+    VC_exo = exodata[:, 1]
+    vardata = load_data('./UCAC4_558-007313/UCAC4_558-007313_Light_Curve.csv')
+    jdt_var = int(vardata[:, 0].mean())
+    vardata[:, 0] -= jdt_var
+    t_var = vardata[:, 0]
+    VC_var = vardata[:, 1]
+
+    p0 = np.array([0.33, 1.0, 0.35, 1.0, 0.425, 1.0, 0.44, 1.0])
+    pt0 = np.array([0., 1.0, 0.375, 0.2, 0.1, 0.05])
+    pb0 = np.array([0.385, 0.425, 1.0, 0.9, 0.9, 0.9, 1.0])
+    
+    # Hier bitte symmetrischen Trapez-Fit
+    params, paramscov = opt.curve_fit(trapez, t_exo, VC_exo, p0=p0)
+    paramst, paramstcov = opt.curve_fit(transit, t_exo, VC_exo, p0=pt0)
+    paramsb, paramsbcov = opt.curve_fit(transit_bezier, t_exo, VC_exo, p0=pb0)
+    if False:
+        plt.plot(t_exo, VC_exo)
+        plt.plot(t_exo, trapez(t_exo, *params), label="Trapez-Fit")
+        plt.plot(t_exo, transit(t_exo, *paramst), label="Transit-Fit")
+        plt.plot(t_exo, transit_bezier(t_exo, *paramsb), label="Bezier-Fit")
+        plt.legend()
+        plt.show()
+    plot_data(exodata, jdt_exo, [trapez, transit, transit_bezier], [params, paramst, paramsb], ['Trapez-Fit', 'symmetrischer Trapez-Fit', 'Bézier-Fit'], 'UCAC4 558-007131', filename='UCAC4.png')
+
+    # Ordnung 7 sieht gut aus mit Gerade
+    params6, params6cov = opt.curve_fit(fourier, t_var, VC_var, p0=[0.15, -0.1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+    params2, params2cov = opt.curve_fit(fourier, t_var, VC_var, p0=[0.15, -0.1, 0.5, 0.5, 0.5, 0.5, 0.5])
+    params1, params1cov = opt.curve_fit(fourier, t_var, VC_var, p0=[0.15, -0.1, 0.5, 0.5, 0.5])
+    print(params2cov.diagonal().mean(), params6cov.diagonal().mean(), params1cov.diagonal().mean())
+    plot_data(vardata, jdt_var, [fourier, fourier, fourier], [params6, params2, params1], ['Fourier-Fit 6.Ordnung', 'Fourier-Fit 2.Ordnung', 'Fourier-Fit 1.Ordnung'], 'Tres-1b', filename='Tres-1b.png')
