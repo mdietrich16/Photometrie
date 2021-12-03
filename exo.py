@@ -164,26 +164,32 @@ if __name__ == "__main__":
     t_var = vardata[:, 0]
     VC_var = vardata[:, 1]
 
-    p0 = np.array([0.33, 1.0, 0.35, 1.0, 0.425, 1.0, 0.44, 1.0])
+    p0tr = np.array([0.33, 1.0, 0.35, 1.0, 0.425, 1.0, 0.44, 1.0])
     pt0 = np.array([0., 1.0, 0.375, 0.2, 0.1, 0.05])
     pb0 = np.array([0.385, 0.425, 1.0, 0.9, 0.9, 0.9, 1.0])
     
     # Hier bitte symmetrischen Trapez-Fit
-    params, paramscov = opt.curve_fit(trapez, t_exo, VC_exo, p0=p0)
+    paramstr, paramstrcov = opt.curve_fit(trapez, t_exo, VC_exo, p0=p0tr)
     paramst, paramstcov = opt.curve_fit(transit, t_exo, VC_exo, p0=pt0)
     paramsb, paramsbcov = opt.curve_fit(transit_bezier, t_exo, VC_exo, p0=pb0)
-    if False:
-        plt.plot(t_exo, VC_exo)
-        plt.plot(t_exo, trapez(t_exo, *params), label="Trapez-Fit")
-        plt.plot(t_exo, transit(t_exo, *paramst), label="Transit-Fit")
-        plt.plot(t_exo, transit_bezier(t_exo, *paramsb), label="Bezier-Fit")
-        plt.legend()
-        plt.show()
-    plot_data(exodata, jdt_exo, [trapez, transit, transit_bezier], [params, paramst, paramsb], ['Trapez-Fit', 'symmetrischer Trapez-Fit', 'Bézier-Fit'], 'UCAC4 558-007131', filename='UCAC4.png')
+    plot_data(exodata, jdt_exo, [trapez, transit, transit_bezier], [paramstr, paramst, paramsb], ['Trapez-Fit', 'symmetrischer Trapez-Fit', 'Bézier-Fit'], 'UCAC4 558-007131', filename='UCAC4.png')
 
     # Ordnung 7 sieht gut aus mit Gerade
     params6, params6cov = opt.curve_fit(fourier, t_var, VC_var, p0=[0.15, -0.1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
     params2, params2cov = opt.curve_fit(fourier, t_var, VC_var, p0=[0.15, -0.1, 0.5, 0.5, 0.5, 0.5, 0.5])
     params1, params1cov = opt.curve_fit(fourier, t_var, VC_var, p0=[0.15, -0.1, 0.5, 0.5, 0.5])
-    print(params2cov.diagonal().mean(), params6cov.diagonal().mean(), params1cov.diagonal().mean())
     plot_data(vardata, jdt_var, [fourier, fourier, fourier], [params6, params2, params1], ['Fourier-Fit 6.Ordnung', 'Fourier-Fit 2.Ordnung', 'Fourier-Fit 1.Ordnung'], 'Tres-1b', filename='Tres-1b.png')
+    
+    exoparams = paramst
+    exostd = np.sqrt(np.diag(paramstcov))
+    varparams = params6
+    varstd = np.sqrt(np.diag(params6cov))
+
+    print("Exoplanet-Transit:")
+    print("Transittiefe:[W]", exoparams[3], "+-", exostd[3])
+    print("relative Transittiefe:", exoparams[3]/exoparams[1], "+-", np.sqrt(np.square(exostd[3]/exoparams[1]) + np.square(exoparams[3]*exostd[1]/exoparams[1]**2)))
+    print("Transit-Duration[d]:", exoparams[4], "+-", exostd[4])
+    print("Totalitätsdauer[d]:", exoparams[5], "+-", exostd[5])
+    
+    print("Bedeckungsveränderlicher:")
+    print("Periodendauer:", varparams[0], "+-", varstd[0])
