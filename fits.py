@@ -115,6 +115,10 @@ def transit_bezier(x, x0, xn, *points):
     return np.piecewise(x, condlist, funclist)
 
 
+def trendline(x, m, b):
+    return m*x + b
+
+
 def fourier(x, *params):
     params = np.array(params)
     assert len(params.shape) == 1
@@ -133,6 +137,42 @@ def fourier(x, *params):
     return coeffs.dot(np.concatenate((s, c))) + m*x + offset
 
 
+def fourier_prime(x, *params):
+    params = np.array(params)
+    assert len(params.shape) == 1
+    n = len(params) - 3
+    assert n % 2 == 0
+    assert n >= 0
+    T = params[0]
+    coeffs = params[3:]
+    k = 2*np.pi / T
+    ts = k * np.atleast_2d(np.arange(1, n//2 + 1)
+                           ).transpose().dot(np.atleast_2d(x))
+    s = k * np.atleast_2d(np.arange(1, n//2 + 1)).transpose() * np.sin(ts)
+    c = k * np.atleast_2d(np.arange(1, n//2 + 1)).transpose() * np.cos(ts)
+    return coeffs.dot(np.concatenate((c, -s)))
+
+
+def fourier_gauss(x, **kwargs):
+    params = kwargs.pop('params', None)
+    dparams = kwargs.pop('dparams', None)
+    params = np.array(params)
+    dparams = np.array(dparams)
+    assert len(params.shape) == 1
+    n = len(params) - 3
+    assert n % 2 == 0
+    assert n >= 0
+    T = params[0]
+    dT = dparams[0]
+    coeffs = params[3:]
+    dcoeffs = dparams[3:]
+    ts = 2 * np.pi * np.atleast_2d(np.arange(1, n//2 + 1)
+                                   ).transpose().dot(np.atleast_2d(x))
+    s = np.sin(ts/T)
+    c = np.cos(ts/T)
+    return np.sqrt(np.sum(np.square(coeffs * np.concatenate((-1/T**2 * ts*c, s*ts/T**2)) * dT)) + np.sum(np.square(np.concatenate((s, c))*dcoeffs)))
+
+
 def load_data(file):
     rawdata = np.genfromtxt(file, delimiter=',', skip_header=1)
     t = rawdata[:, 0]
@@ -148,7 +188,7 @@ def plot_data(data, date, fit_funcs, fit_params, labels, star, filename=None):
     VCmax, VCmin, VCmean = VC.max(), VC.min(), VC.mean()
     VCerrmax = np.max(VCerr)
 
-    #plt.errorbar(x=jul_to_greg(t), y=VC, yerr= VCerr, fmt='x')
+    # plt.errorbar(x=jul_to_greg(t), y=VC, yerr= VCerr, fmt='x')
     plt.figure(figsize=(14, 10), dpi=300)
 
     plt.errorbar(x=t, y=VC, yerr=VCerr, fmt='.',
@@ -159,7 +199,7 @@ def plot_data(data, date, fit_funcs, fit_params, labels, star, filename=None):
         plt.plot(t, fit, label=labels[i])
 
     plt.grid(True, color='gray', linewidth=0.1)
-    #plt.ylim(VCmin - 0.01 * VCmean - VCerrmax, VCmax + 0.01 * VCmean + VCerrmax)
+    # plt.ylim(VCmin - 0.01 * VCmean - VCerrmax, VCmax + 0.01 * VCmean + VCerrmax)
     plt.legend()
     plt.title('Lichtkurve ' + star)
     plt.xlabel('Zeit in Tagen am ' + str(jul_to_greg(date).date()))
@@ -203,7 +243,7 @@ if __name__ == "__main__":
     params1, params1cov = opt.curve_fit(fourier, t_var, VC_var, p0=[
                                         0.15, -0.1, 0.5, 0.5, 0.5])
     plot_data(vardata, jdt_var, [fourier, fourier, fourier], [params6, params2, params1], [
-              'Fourier-Fit 6.Ordnung', 'Fourier-Fit 2.Ordnung', 'Fourier-Fit 1.Ordnung'], 'UCAC4 558-007131', filename='UCAC4.png')
+              'Fourier-Fit 6.Ordnung', 'Fourier-Fit 2.Ordnung', 'Fourier-Fit 1.Ordnung'], 'UCAC4 558-007313', filename='UCAC4.png')
 
     exoparams = paramst
     exostd = np.sqrt(np.diag(paramstcov))
@@ -220,3 +260,10 @@ if __name__ == "__main__":
 
     print("Bedeckungsveränderlicher:")
     print("Periodendauer:", varparams[0], "+-", varstd[0])
+    minx = opt.fsolve(fourier_prime, 0.35, args=(*varparams,))
+    maxx = opt.fsolve(fourier_prime, 0.45, args=(*varparams,))
+    dsfvae = np.sqrt(fourier_gauss(minx, **{"params": varparams, "dparams": varstd})**2 + fourier_gauss(
+        minx, **{"params": varparams, "dparams": varstd})**2 + varparams[1]**2)
+    print(varparams[3:])
+    print("Strahlungsflussverhältnisänderung:", fourier(maxx, *varparams) -
+          fourier(minx, *varparams) - varparams[1] * (maxx - minx), "+-", dsfvae)
