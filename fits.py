@@ -260,10 +260,17 @@ if __name__ == "__main__":
 
     print("Bedeckungsveränderlicher:")
     print("Periodendauer:", varparams[0], "+-", varstd[0])
-    minx = opt.fsolve(fourier_prime, 0.35, args=(*varparams,))
-    maxx = opt.fsolve(fourier_prime, 0.45, args=(*varparams,))
-    dsfvae = np.sqrt(fourier_gauss(minx, **{"params": varparams, "dparams": varstd})**2 + fourier_gauss(
-        minx, **{"params": varparams, "dparams": varstd})**2 + varparams[1]**2)
-    print(varparams[3:])
-    print("Strahlungsflussverhältnisänderung:", fourier(maxx, *varparams) -
-          fourier(minx, *varparams) - varparams[1] * (maxx - minx), "+-", dsfvae)
+    # minx = opt.fsolve(fourier_prime, 0.35, args=(*varparams,))
+    # maxx = opt.fsolve(fourier_prime, 0.45, args=(*varparams,))
+    # dsfvae = np.sqrt(fourier_gauss(minx, **{"params": varparams, "dparams": varstd})**2 + fourier_gauss(
+    #     minx, **{"params": varparams, "dparams": varstd})**2 + varparams[1]**2)
+    # print("Strahlungsflussverhältnisänderung:", fourier(maxx, *varparams) -
+    #       fourier(minx, *varparams) - varparams[1] * (maxx - minx), "+-", dsfvae)
+    vdatatrans = VC_var - varparams[1] * (t_var - t_var[0]) - varparams[2]
+    imax = vdatatrans.argmax()
+    imin = vdatatrans.argmin()
+    # Strahlungsflussverhältnisänderung = VC_max - VC_min - m*(t_max - t_min)
+    verr = np.sqrt(vardata[imax, 2]**2 - vardata[imin, 2]
+                   ** 2 - (varstd[1]*(t_var[imax] - t_var[imin]))**2)
+    print("Strahlungsflussverhältnisänderung:",
+          vdatatrans[imax] - vdatatrans[imin], "+-", verr)
