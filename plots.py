@@ -8,7 +8,8 @@ def load_data(filename):
     data = rawdata[:, 1::2]
     errs = rawdata[:, 2::2]
     mean = np.mean(data, axis=0)
-    mask = np.abs(data - mean) / mean > 2
+    std = np.std(data, axis=0)
+    mask = np.abs(data - mean) / std > 5
     if np.any(mask):
         mask = np.any(mask, axis=1).nonzero()[0]
         t = np.delete(t, mask, 0)
@@ -51,9 +52,9 @@ def plot_data(t, data, errs, n, k, name):
 
     # K vs K
     figKK, axKK = plt.subplots(
-        n*(n-1)//2, 1, subplot_kw=kwargs, layout='constrained', figsize=(14, 10), dpi=200, sharex='col')
+        k*(k-1)//2, 1, subplot_kw=kwargs, layout='constrained', figsize=(14, 10), dpi=200, sharex='col')
     figKK.suptitle("Strahlungsflussverhältnisse K vs K")
-    for i in range(n*(n-1)//2):
+    for i in range(k*(k-1)//2):
         axKK[i].errorbar(t, data[:, 1+k+k*n+i], errs[:, 1+k +
                          k*n+i], fmt='.', markersize=4, elinewidth=.8, capsize=1)
         x = int(0.5 + np.sqrt(0.25 + 2*i))
@@ -70,3 +71,6 @@ if __name__ == '__main__':
     t, data, errs = load_data(
         'UCAC4_558-007313/UCAC4_558-007313_Light_curve.txt')
     plot_data(t, data, errs, 3, 3, 'UCAC')
+    t, data, errs = load_data(
+        './Tres-1b/Tres-1b-Sel.txt')
+    plot_data(t, data, errs, 5, 4, 'Tres-1b')

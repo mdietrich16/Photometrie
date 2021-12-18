@@ -38,8 +38,10 @@ def greg_to_jul(dt):
 
 
 def trapez(x, p0x, p0y, p1x, p1y, p2x, p2y, p3x, p3y):
-    condlist = [np.logical_or(x < p0x, x > p3x), np.logical_and(
-        x < p1x, x > p0x), np.logical_and(x < p2x, x > p1x), np.logical_and(x < p3x, x > p2x)]
+    condlist = [np.logical_or(x < p0x, x > p3x),
+                np.logical_and(x < p1x, x > p0x),
+                np.logical_and(x < p2x, x > p1x),
+                np.logical_and(x < p3x, x > p2x)]
 
     def steady(x):
         return (p3y - p0y) / (p3x - p0x) * (x - p0x) + p0y
@@ -68,10 +70,14 @@ def transit(x, m, b, tm, tt, td, ttd):
     td2, ttd2 = td/2, ttd/2
     diff = td2 - ttd2
     slope = tt / diff
-    condlist = [np.logical_and(x > tm-td/2, x < tm-ttd/2), np.logical_and(
-        x > tm-ttd/2, x < tm+ttd/2), np.logical_and(x > tm+ttd/2, x < tm+td/2)]
-    y += np.piecewise(x, condlist, funclist=[lambda x: -slope * (
-        x - (tm - td2)), lambda x: -tt, lambda x: slope * (x - (tm + td2)), lambda x: 0])
+    condlist = [np.logical_and(x > tm-td/2, x < tm-ttd/2),
+                np.logical_and(x > tm-ttd/2, x < tm+ttd/2),
+                np.logical_and(x > tm+ttd/2, x < tm+td/2)]
+    y += np.piecewise(x, condlist, funclist=[
+        lambda x: -slope * (x - (tm - td2)),
+        lambda x: -tt,
+        lambda x: slope * (x - (tm + td2)),
+        lambda x: 0])
     return y
 
 
@@ -173,14 +179,25 @@ def fourier_gauss(x, **kwargs):
     return np.sqrt(np.sum(np.square(coeffs * np.concatenate((-1/T**2 * ts*c, s*ts/T**2)) * dT)) + np.sum(np.square(np.concatenate((s, c))*dcoeffs)))
 
 
+def mag_to_S(x):
+    return np.power(10, -x/2.5)
+
+
+def S_to_mag(x):
+    return -2.5*np.log(x)/np.log(10)
+
+
 def load_data(file):
     rawdata = np.genfromtxt(file, delimiter=',', skip_header=1)
     t = rawdata[:, 0]
     VC = np.power(10, -rawdata[:, 1]/2.5)
+    #VC = rawdata[:, 1]
     # 10^(-x/2.5)' = e^(ln10 * -x/2.5)' = -ln(10)/2.5 * e^(ln10 * -x/2.5)
     VCerr = np.log(10)/2.5 * np.power(10, -rawdata[:, 1]/2.5) * rawdata[:, 2]
+    #VCerr = rawdata[:, 2]
     data = np.stack((t, VC, VCerr), axis=-1)
-    return data
+    magdata = np.stack((t, rawdata[:, 1], rawdata[:, 2]), axis=-1)
+    return data, magdata
 
 
 def plot_data(data, date, fit_funcs, fit_params, labels, star, filename=None):
@@ -213,12 +230,13 @@ def plot_data(data, date, fit_funcs, fit_params, labels, star, filename=None):
 
 
 if __name__ == "__main__":
-    exodata = load_data('./Tres-1b/Tres-1b_V-C.csv')
+    exodata, exomag = load_data('./Tres-1b/Tres-1b_V-C.csv')
     jdt_exo = int(exodata[:, 0].mean())
     exodata[:, 0] -= jdt_exo
     t_exo = exodata[:, 0]
     VC_exo = exodata[:, 1]
-    vardata = load_data('./UCAC4_558-007313/UCAC4_558-007313_Light_Curve.csv')
+    vardata, varmag = load_data(
+        './UCAC4_558-007313/UCAC4_558-007313_Light_Curve.csv')
     jdt_var = int(vardata[:, 0].mean())
     vardata[:, 0] -= jdt_var
     t_var = vardata[:, 0]
@@ -253,24 +271,40 @@ if __name__ == "__main__":
     print("Exoplanet-Transit:")
     print("Transittiefe:[relativer Strahlungsfluss]",
           exoparams[3], "+-", exostd[3])
-    print("relative Transittiefe:", exoparams[3]/exoparams[1], "+-", np.sqrt(np.square(
-        exostd[3]/exoparams[1]) + np.square(exoparams[3]*exostd[1]/exoparams[1]**2)))
+    print("Transitmitte in J2000[d]:", jdt_exo + exoparams[2], "+-", exostd[2])
     print("Transit-Duration[d]:", exoparams[4], "+-", exostd[4])
     print("Totalitätsdauer[d]:", exoparams[5], "+-", exostd[5])
 
     print("Bedeckungsveränderlicher:")
     print("Periodendauer:", varparams[0], "+-", varstd[0])
-    # minx = opt.fsolve(fourier_prime, 0.35, args=(*varparams,))
-    # maxx = opt.fsolve(fourier_prime, 0.45, args=(*varparams,))
-    # dsfvae = np.sqrt(fourier_gauss(minx, **{"params": varparams, "dparams": varstd})**2 + fourier_gauss(
-    #     minx, **{"params": varparams, "dparams": varstd})**2 + varparams[1]**2)
-    # print("Strahlungsflussverhältnisänderung:", fourier(maxx, *varparams) -
-    #       fourier(minx, *varparams) - varparams[1] * (maxx - minx), "+-", dsfvae)
+
     vdatatrans = VC_var - varparams[1] * (t_var - t_var[0]) - varparams[2]
     imax = vdatatrans.argmax()
     imin = vdatatrans.argmin()
     # Strahlungsflussverhältnisänderung = VC_max - VC_min - m*(t_max - t_min)
     verr = np.sqrt(vardata[imax, 2]**2 - vardata[imin, 2]
                    ** 2 - (varstd[1]*(t_var[imax] - t_var[imin]))**2)
-    print("Strahlungsflussverhältnisänderung:",
-          vdatatrans[imax] - vdatatrans[imin], "+-", verr)
+    # print("Strahlungsflussverhältnisänderung:",
+    #      vdatatrans[imax] - vdatatrans[imin], "+-", verr)
+
+    # Ching chong
+    varmagparams, varmagcov = opt.curve_fit(
+        lambda x, m, b: m * x + b, t_var, varmag[:, 1])
+    varmagstd = np.sqrt(np.diag(varmagcov))
+    vdatatrans = varmag[:, 1] - varmagparams[0] * \
+        (t_var - t_var[0]) - varmagparams[1]
+    imax = vdatatrans.argmax()
+    imin = vdatatrans.argmin()
+    # Strahlungsflussverhältnisänderung = VC_max - VC_min - m*(t_max - t_min)
+    verr = np.sqrt(varmag[imax, 2]**2 - varmag[imin, 2]
+                   ** 2 + (varmagstd[0]*(t_var[imax] - t_var[imin]))**2)
+    # print("Magnitudenvariation:",
+    #      vdatatrans[imax] - vdatatrans[imin], "+-", verr)
+
+    # Bing bong
+    minx = opt.fsolve(fourier_prime, 0.35, args=(*varparams,))
+    maxx = opt.fsolve(fourier_prime, 0.45, args=(*varparams,))
+    vmagerr = np.sqrt(2*np.mean(varmag[:, 2])
+                      ** 2 + (varmagstd[0]*(maxx - minx))**2)
+    print("Magnitudenvariation:", np.squeeze(S_to_mag(fourier(minx, *varparams)) -
+          S_to_mag(fourier(maxx, *varparams)) - varmagparams[0] * (minx - maxx)), "+-", np.squeeze(vmagerr))
